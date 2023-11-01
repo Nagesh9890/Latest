@@ -1,4 +1,34 @@
 
+
+
+# Define the start and end dates
+start_date = '2022-07-06'
+end_date = '2022-07-06'
+
+# Read and filter the data for the specified date range
+df2 = sqlContext.table('db_gold.gld_phone_pe_transactions').filter((F.col('data_dt') >= start_date) & (F.col('data_dt') <= end_date))
+
+# Show the resulting DataFrame
+df2.show()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 # Define the custom tokenizer
 def custom_tokenizer(text):
     pattern = re.compile(r'[a-zA-Z]+\d+')
