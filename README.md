@@ -1,4 +1,6 @@
 
+AnalysisException: u"cannot resolve '`id`' given input columns: [payer_account_type, Personal Transfer_count, 
+
 Apologies for the oversight. The error is due to the fact that I attempted to use f-string formatting with Spark SQL expressions, which is not directly supported.
 
 Let's refactor the code to avoid the issue. Instead of using f-string formatting, we can construct the logic using PySpark functions.
