@@ -1,3 +1,8 @@
+  File "<ipython-input-12-c46e6c75c523>", line 20
+    .otherwise(F.expr(f"CASE WHEN sum_{category} BETWEEN 5000000 * (10 - id) AND 5000000 * (9 - id) THEN CAST(id AS STRING) ELSE NULL END"))
+                                                                                                                                         ^
+SyntaxError: invalid syntax
+
 from pyspark.sql import functions as F
 from pyspark.sql import Window
 
