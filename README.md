@@ -1,57 +1,99 @@
-import re
+#automated Model Training
+#Importing Libraries
+import numpy as np
+import pandas as pd
 import pickle
-from pyspark.sql import functions as F
+from sklearn.cross_validation import train_test_split
+from sklearn.preprocessing import StandardScaler
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import confusion_matrix
 from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics import accuracy_score
 
+df = pd.read_excel("PhonePe_Sherloc_Categories.xlsx")  # Replace with the path to your dataset
+df.columns
+df2 = df[['payer_name','payer_vpa','payee_account_type','payee_name','payee_vpa','payer_account_type', 'Category1','Category2']]
 
-loyalty_out_test.prospect_phonepe_leads
-
-# Define the custom tokenizer
 def custom_tokenizer(text):
+    # split the text and value using regular expression
+    import re
     pattern = re.compile(r'[a-zA-Z]+\d+')
-    return pattern.findall(text)
+    text_and_value = pattern.findall(text)
+    return text_and_value
+# Apply TF-Vectorization on data
+tfidf_payer_name = TfidfVectorizer()
+tfidf_matrix_payer_name = tfidf_payer_name.fit_transform(df2['payer_name'].astype(str))
 
-# Load the saved models and vectorizers
-models = ['clf_cat1.pkl', 'clf_cat2.pkl', 'tfidf_payer_name.pkl', 'tfidf_payee_name.pkl',
-          'tfidf_payee_account_type.pkl', 'tfidf_payer_account_type.pkl', 'tfidf_payer_vpa.pkl', 'tfidf_payee_vpa.pkl']
+tfidf_payee_name = TfidfVectorizer()
+tfidf_matrix_payee_name = tfidf_payee_name.fit_transform(df2['payee_name'].astype(str))
 
-clf_cat1, clf_cat2, tfidf_payer_name, tfidf_payee_name, tfidf_payee_account_type, tfidf_payer_account_type, tfidf_payer_vpa, tfidf_payee_vpa = [
-    pickle.load(open(model, 'rb')) for model in models]
+tfidf_payee_account_type = TfidfVectorizer()
+tfidf_matrix_payee_account_type = tfidf_payee_account_type.fit_transform(df2['payee_account_type'].astype(str))
 
-# Define the start and end dates
-start_date = '2022-07-06'
-end_date = '2022-07-06'
+tfidf_payer_account_type = TfidfVectorizer()
+tfidf_matrix_payer_account_type = tfidf_payer_account_type.fit_transform(df2['payer_account_type'].astype(str))
 
-# Read and filter the data for the specified date range
-df2 = sqlContext.table('db_gold.gld_phone_pe_transactions').filter((F.col('data_dt') >= start_date) & (F.col('data_dt') <= end_date)).limit(100)
+tfidf_payer_vpa = TfidfVectorizer(tokenizer=custom_tokenizer)
+df2['payer_vpa'] = df2['payer_vpa'].astype(str)
+tfidf_matrix_payer_vpa = tfidf_payer_vpa.fit_transform(df2['payer_vpa'])
 
-# Convert the Spark DataFrame to Pandas DataFrame for processing
-df = df2.toPandas()
-
-# Handle NaN values by replacing them with empty strings
-df.fillna("", inplace=True)
-
-# Transform the features
-features = pd.concat([
-    pd.DataFrame(tfidf_vectorizer.transform(df[column]).toarray())
-    for tfidf_vectorizer, column in zip([tfidf_payer_name, tfidf_payee_name, tfidf_payee_account_type,
-                                         tfidf_payer_account_type, tfidf_payer_vpa, tfidf_payee_vpa],
-                                        ['payer_name', 'payee_name', 'payee_account_type',
-                                         'payer_account_type', 'payer_vpa', 'payee_vpa'])
-], axis=1)
-
-# Predict categories
-df['category_level1'] = clf_cat1.predict(features)
-df['category_level2'] = clf_cat2.predict(features)
-
-# Convert the Pandas DataFrame back to a Spark DataFrame
-result_df = sqlContext.createDataFrame(df)
-
-# Show the resulting DataFrame
-result_df.select(['payer_name', 'payee_name', 'category_level1', 'category_level2']).show()
+tfidf_payee_vpa = TfidfVectorizer(tokenizer=custom_tokenizer)
+df2['payee_vpa'] = df2['payee_vpa'].astype(str)
+tfidf_matrix_payee_vpa = tfidf_payee_vpa.fit_transform(df2['payee_vpa'])
 
 
+tfidf_matrix = pd.concat([pd.DataFrame(tfidf_matrix_payer_name.toarray()),
+                          pd.DataFrame(tfidf_matrix_payee_name.toarray()),
+                          pd.DataFrame(tfidf_matrix_payee_account_type.toarray()),
+                          pd.DataFrame(tfidf_matrix_payer_account_type.toarray()),
+                          pd.DataFrame(tfidf_matrix_payer_vpa.toarray()),
+                          pd.DataFrame(tfidf_matrix_payee_vpa.toarray())], axis=1)
+X_train, X_test, y_cat1_train, y_cat1_test, y_cat2_train, y_cat2_test = train_test_split(tfidf_matrix, df2['Category1'], df2['Category2'], test_size=0.2, random_state=42)
+clf_cat1 = RandomForestClassifier()
 
+clf_cat1.fit(X_train, y_cat1_train)
+
+clf_cat2 = RandomForestClassifier()
+clf_cat2.fit(X_train, y_cat2_train) # Make predictions for each target variable
+
+predictions_cat1 = clf_cat1.predict(X_test)
+predictions_cat2 = clf_cat2.predict(X_test)
+
+accuracy_cat1 = accuracy_score(y_cat1_test, predictions_cat1)
+print "Accuracy for Category Level 1: %.2f" % accuracy_cat1 
+
+
+# Calculate accuracy for Category Level 2 predictions
+accuracy_cat2 = accuracy_score(y_cat2_test, predictions_cat2)
+print "Accuracy for Category Level 2: %.2f" % accuracy_cat2
+
+df2.head(2)
+
+# After training the Random Forest classifiers:
+with open("clf_cat1.pkl", "wb") as f:
+    pickle.dump(clf_cat1, f)
+
+with open("clf_cat2.pkl", "wb") as f:
+    pickle.dump(clf_cat2, f)
+
+# After fitting the Tfidf vectorizers:
+with open("tfidf_payer_name.pkl", "wb") as f:
+    pickle.dump(tfidf_payer_name, f)
+
+with open("tfidf_payee_name.pkl", "wb") as f:
+    pickle.dump(tfidf_payee_name, f)
+
+with open("tfidf_payee_account_type.pkl", "wb") as f:
+    pickle.dump(tfidf_payee_account_type, f)
+
+with open("tfidf_payer_account_type.pkl", "wb") as f:
+    pickle.dump(tfidf_payer_account_type, f)
+
+with open("tfidf_payer_vpa.pkl", "wb") as f:
+    pickle.dump(tfidf_payer_vpa, f)
+
+with open("tfidf_payee_vpa.pkl", "wb") as f:
+    pickle.dump(tfidf_payee_vpa, f)
 
 
 
