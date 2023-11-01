@@ -1,13 +1,21 @@
-
-AnalysisException: u"cannot resolve '`id`' given input columns: [payer_account_type, Personal Transfer_count, 
-
-Apologies for the oversight. The error is due to the fact that I attempted to use f-string formatting with Spark SQL expressions, which is not directly supported.
-
-Let's refactor the code to avoid the issue. Instead of using f-string formatting, we can construct the logic using PySpark functions.
-
-python
-Copy code
 from pyspark.sql import functions as F
+
+def bucketing_logic(column_name, acc_type):
+    """
+    Return the bucketing logic for a given column based on account type.
+    """
+    if acc_type == "SAVINGS":
+        boundaries = [5000000 * i for i in range(10, 0, -1)]
+        labels = [str(i) for i in range(10, 0, -1)]
+    else:
+        boundaries = [15000000 * i for i in range(10, 0, -1)]
+        labels = [str(i) for i in range(10, 0, -1)]
+    
+    # Construct bucketing logic
+    logic = F.when(F.col(column_name).isNull() | (F.col(column_name) == 0), "No transactions")
+    for b, l in zip(boundaries, labels):
+        logic = logic.when(F.col(column_name) < b, l)
+    return logic.otherwise("1")
 
 def compute_aggregates_optimized(df, category_col, amount_col):
     # Pivot and aggregate
@@ -22,25 +30,19 @@ def compute_aggregates_optimized(df, category_col, amount_col):
     # Rename columns, and add value type column
     for category in categories:
         agg_df = agg_df.withColumnRenamed(category + "_count", "count_" + category) \
-                      .withColumnRenamed(category + "_sum", "sum_" + category) \
-                      .withColumn("type_" + category, 
-                                  F.when((F.col("count_" + category) == 0) | (F.col("sum_" + category).isNull()) | (F.col("sum_" + category) == 0), "No transactions")
-                                  .when(F.col("payer_account_type") == "SAVINGS", 
-                                        F.when(F.col("sum_" + category) < 5000000, "10")
-                                        .otherwise(
-                                            F.expr("CASE WHEN sum_{0} BETWEEN 5000000 * (10 - id) AND 5000000 * (9 - id) THEN CAST(id AS STRING) ELSE NULL END".format(category))
-                                        )
-                                  )
-                                  .when(F.col("payer_account_type") == "CURRENT", 
-                                        F.when(F.col("sum_" + category) < 15000000, "10")
-                                        .otherwise(
-                                            F.expr("CASE WHEN sum_{0} BETWEEN 15000000 * (10 - id) AND 15000000 * (9 - id) THEN CAST(id AS STRING) ELSE NULL END".format(category))
-                                        )
-                                  )
-                                  .otherwise("Unknown Type"))
-    
-    return agg_df.cache()  # Cache this DataFrame
-  
+                      .withColumnRenamed(category + "_sum", "sum_" + category)
+        
+        savings_logic = bucketing_logic("sum_" + category, "SAVINGS")
+        current_logic = bucketing_logic("sum_" + category, "CURRENT")
+        
+        agg_df = agg_df.withColumn("type_" + category,
+                                   F.when(F.col("payer_account_type") == "SAVINGS", savings_logic)
+                                    .when(F.col("payer_account_type") == "CURRENT", current_logic)
+                                    .otherwise("Unknown Type"))
+    return agg_df.cache()
+
+# Rest of the code remains unchanged...
+
   
   
   
