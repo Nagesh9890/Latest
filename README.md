@@ -3,6 +3,9 @@ import pickle
 from pyspark.sql import functions as F
 from sklearn.feature_extraction.text import TfidfVectorizer
 
+
+loyalty_out_test.prospect_phonepe_leads
+
 # Define the custom tokenizer
 def custom_tokenizer(text):
     pattern = re.compile(r'[a-zA-Z]+\d+')
