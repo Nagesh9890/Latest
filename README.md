@@ -1,3 +1,49 @@
+from pyspark.sql import functions as F
+
+def compute_aggregates_optimized(df, category_col, amount_col):
+    # Pivot and aggregate
+    agg_df = df.groupBy("payer_account_number", "payer_account_type").pivot(category_col).agg(
+        F.count(amount_col).alias("count"),
+        F.sum(amount_col).alias("sum")
+    )
+    
+    # Get column names representing the categories (after pivot)
+    category_columns = [col for col in agg_df.columns if category_col in col and ("_sum" in col or "_count" in col)]
+    
+    for column in category_columns:
+        if "_sum" in column:
+            category = column.replace("_sum", "")
+            
+            savings_logic = bucketing_logic(column, "SAVINGS")
+            current_logic = bucketing_logic(column, "CURRENT")
+            
+            agg_df = agg_df.withColumn("type_" + category,
+                                       F.when(F.col("payer_account_type") == "SAVINGS", savings_logic)
+                                        .when(F.col("payer_account_type") == "CURRENT", current_logic)
+                                        .otherwise("Unknown Type"))
+    return agg_df.cache()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 Py4JJavaErrorTraceback (most recent call last)
 <ipython-input-15-854aebf0c677> in <module>()
