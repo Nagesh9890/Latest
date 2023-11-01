@@ -1,45 +1,135 @@
-from pyspark.sql import functions as F
 
-def bucketing_logic(column_name, acc_type):
-    """
-    Return the bucketing logic for a given column based on account type.
-    """
-    if acc_type == "SAVINGS":
-        boundaries = [5000000 * i for i in range(10, 0, -1)]
-        labels = [str(i) for i in range(10, 0, -1)]
-    else:
-        boundaries = [15000000 * i for i in range(10, 0, -1)]
-        labels = [str(i) for i in range(10, 0, -1)]
-    
-    # Construct bucketing logic
-    logic = F.when(F.col(column_name).isNull() | (F.col(column_name) == 0), "No transactions")
-    for b, l in zip(boundaries, labels):
-        logic = logic.when(F.col(column_name) < b, l)
-    return logic.otherwise("1")
+Py4JJavaErrorTraceback (most recent call last)
+<ipython-input-15-854aebf0c677> in <module>()
+     43 
+     44 # Compute aggregates for category_level1 and category_level2
+---> 45 agg_df1 = compute_aggregates_optimized(result_df, "category_level1", "payer_amount")
+     46 agg_df2 = compute_aggregates_optimized(result_df, "category_level2", "payer_amount")
+     47 
 
-def compute_aggregates_optimized(df, category_col, amount_col):
-    # Pivot and aggregate
-    agg_df = df.groupBy("payer_account_number", "payer_account_type").pivot(category_col).agg(
-        F.count(amount_col).alias("count"),
-        F.sum(amount_col).alias("sum")
-    )
-    
-    # List of categories
-    categories = df.select(category_col).distinct().rdd.flatMap(lambda x: x).collect()
-    
-    # Rename columns, and add value type column
-    for category in categories:
-        agg_df = agg_df.withColumnRenamed(category + "_count", "count_" + category) \
-                      .withColumnRenamed(category + "_sum", "sum_" + category)
-        
-        savings_logic = bucketing_logic("sum_" + category, "SAVINGS")
-        current_logic = bucketing_logic("sum_" + category, "CURRENT")
-        
-        agg_df = agg_df.withColumn("type_" + category,
-                                   F.when(F.col("payer_account_type") == "SAVINGS", savings_logic)
-                                    .when(F.col("payer_account_type") == "CURRENT", current_logic)
-                                    .otherwise("Unknown Type"))
-    return agg_df.cache()
+<ipython-input-15-854aebf0c677> in compute_aggregates_optimized(df, category_col, amount_col)
+     26 
+     27     # List of categories
+---> 28     categories = df.select(category_col).distinct().rdd.flatMap(lambda x: x).collect()
+     29 
+     30     # Rename columns, and add value type column
+
+/opt/cloudera/parcels/CDH-7.1.7-1.cdh7.1.7.p1000.24102687/lib/spark/python/pyspark/rdd.pyc in collect(self)
+    814         """
+    815         with SCCallSiteSync(self.context) as css:
+--> 816             sock_info = self.ctx._jvm.PythonRDD.collectAndServe(self._jrdd.rdd())
+    817         return list(_load_from_socket(sock_info, self._jrdd_deserializer))
+    818 
+
+/opt/cloudera/parcels/CDH-7.1.7-1.cdh7.1.7.p1000.24102687/lib/spark/python/lib/py4j-0.10.7-src.zip/py4j/java_gateway.py in __call__(self, *args)
+   1255         answer = self.gateway_client.send_command(command)
+   1256         return_value = get_return_value(
+-> 1257             answer, self.gateway_client, self.target_id, self.name)
+   1258 
+   1259         for temp_arg in temp_args:
+
+/opt/cloudera/parcels/CDH-7.1.7-1.cdh7.1.7.p1000.24102687/lib/spark/python/pyspark/sql/utils.pyc in deco(*a, **kw)
+     61     def deco(*a, **kw):
+     62         try:
+---> 63             return f(*a, **kw)
+     64         except py4j.protocol.Py4JJavaError as e:
+     65             s = e.java_exception.toString()
+
+/opt/cloudera/parcels/CDH-7.1.7-1.cdh7.1.7.p1000.24102687/lib/spark/python/lib/py4j-0.10.7-src.zip/py4j/protocol.py in get_return_value(answer, gateway_client, target_id, name)
+    326                 raise Py4JJavaError(
+    327                     "An error occurred while calling {0}{1}{2}.\n".
+--> 328                     format(target_id, ".", name), value)
+    329             else:
+    330                 raise Py4JError(
+
+Py4JJavaError: An error occurred while calling z:org.apache.spark.api.python.PythonRDD.collectAndServe.
+: org.apache.spark.SparkException: Job aborted due to stage failure: Task 143 in stage 51.0 failed 4 times, most recent failure: Lost task 143.3 in stage 51.0 (TID 2472, yball1r044ca20.yesbank.com, executor 24): java.io.IOException: Cannot run program "/opt/anaconda/anaconda2/bin/python": error=2, No such file or directory
+	at java.lang.ProcessBuilder.start(ProcessBuilder.java:1048)
+	at org.apache.spark.api.python.PythonWorkerFactory.startDaemon(PythonWorkerFactory.scala:197)
+	at org.apache.spark.api.python.PythonWorkerFactory.createThroughDaemon(PythonWorkerFactory.scala:122)
+	at org.apache.spark.api.python.PythonWorkerFactory.create(PythonWorkerFactory.scala:95)
+	at org.apache.spark.SparkEnv.createPythonWorker(SparkEnv.scala:118)
+	at org.apache.spark.api.python.BasePythonRunner.compute(PythonRunner.scala:111)
+	at org.apache.spark.api.python.PythonRDD.compute(PythonRDD.scala:66)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:346)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:310)
+	at org.apache.spark.scheduler.ResultTask.runTask(ResultTask.scala:90)
+	at org.apache.spark.scheduler.Task.run(Task.scala:123)
+	at org.apache.spark.executor.Executor$TaskRunner$$anonfun$11.apply(Executor.scala:413)
+	at org.apache.spark.util.Utils$.tryWithSafeFinally(Utils.scala:1334)
+	at org.apache.spark.executor.Executor$TaskRunner.run(Executor.scala:419)
+	at java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1149)
+	at java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:624)
+	at java.lang.Thread.run(Thread.java:750)
+Caused by: java.io.IOException: error=2, No such file or directory
+	at java.lang.UNIXProcess.forkAndExec(Native Method)
+	at java.lang.UNIXProcess.<init>(UNIXProcess.java:247)
+	at java.lang.ProcessImpl.start(ProcessImpl.java:134)
+	at java.lang.ProcessBuilder.start(ProcessBuilder.java:1029)
+	... 16 more
+
+Driver stacktrace:
+	at org.apache.spark.scheduler.DAGScheduler.org$apache$spark$scheduler$DAGScheduler$$failJobAndIndependentStages(DAGScheduler.scala:1928)
+	at org.apache.spark.scheduler.DAGScheduler$$anonfun$abortStage$1.apply(DAGScheduler.scala:1916)
+	at org.apache.spark.scheduler.DAGScheduler$$anonfun$abortStage$1.apply(DAGScheduler.scala:1915)
+	at scala.collection.mutable.ResizableArray$class.foreach(ResizableArray.scala:59)
+	at scala.collection.mutable.ArrayBuffer.foreach(ArrayBuffer.scala:48)
+	at org.apache.spark.scheduler.DAGScheduler.abortStage(DAGScheduler.scala:1915)
+	at org.apache.spark.scheduler.DAGScheduler$$anonfun$handleTaskSetFailed$1.apply(DAGScheduler.scala:951)
+	at org.apache.spark.scheduler.DAGScheduler$$anonfun$handleTaskSetFailed$1.apply(DAGScheduler.scala:951)
+	at scala.Option.foreach(Option.scala:257)
+	at org.apache.spark.scheduler.DAGScheduler.handleTaskSetFailed(DAGScheduler.scala:951)
+	at org.apache.spark.scheduler.DAGSchedulerEventProcessLoop.doOnReceive(DAGScheduler.scala:2149)
+	at org.apache.spark.scheduler.DAGSchedulerEventProcessLoop.onReceive(DAGScheduler.scala:2098)
+	at org.apache.spark.scheduler.DAGSchedulerEventProcessLoop.onReceive(DAGScheduler.scala:2087)
+	at org.apache.spark.util.EventLoop$$anon$1.run(EventLoop.scala:49)
+	at org.apache.spark.scheduler.DAGScheduler.runJob(DAGScheduler.scala:762)
+	at org.apache.spark.SparkContext.runJob(SparkContext.scala:2079)
+	at org.apache.spark.SparkContext.runJob(SparkContext.scala:2100)
+	at org.apache.spark.SparkContext.runJob(SparkContext.scala:2119)
+	at org.apache.spark.SparkContext.runJob(SparkContext.scala:2144)
+	at org.apache.spark.rdd.RDD$$anonfun$collect$1.apply(RDD.scala:990)
+	at org.apache.spark.rdd.RDDOperationScope$.withScope(RDDOperationScope.scala:151)
+	at org.apache.spark.rdd.RDDOperationScope$.withScope(RDDOperationScope.scala:112)
+	at org.apache.spark.rdd.RDD.withScope(RDD.scala:385)
+	at org.apache.spark.rdd.RDD.collect(RDD.scala:989)
+	at org.apache.spark.api.python.PythonRDD$.collectAndServe(PythonRDD.scala:167)
+	at org.apache.spark.api.python.PythonRDD.collectAndServe(PythonRDD.scala)
+	at sun.reflect.NativeMethodAccessorImpl.invoke0(Native Method)
+	at sun.reflect.NativeMethodAccessorImpl.invoke(NativeMethodAccessorImpl.java:62)
+	at sun.reflect.DelegatingMethodAccessorImpl.invoke(DelegatingMethodAccessorImpl.java:43)
+	at java.lang.reflect.Method.invoke(Method.java:498)
+	at py4j.reflection.MethodInvoker.invoke(MethodInvoker.java:244)
+	at py4j.reflection.ReflectionEngine.invoke(ReflectionEngine.java:357)
+	at py4j.Gateway.invoke(Gateway.java:282)
+	at py4j.commands.AbstractCommand.invokeMethod(AbstractCommand.java:132)
+	at py4j.commands.CallCommand.execute(CallCommand.java:79)
+	at py4j.GatewayConnection.run(GatewayConnection.java:238)
+	at java.lang.Thread.run(Thread.java:748)
+Caused by: java.io.IOException: Cannot run program "/opt/anaconda/anaconda2/bin/python": error=2, No such file or directory
+	at java.lang.ProcessBuilder.start(ProcessBuilder.java:1048)
+	at org.apache.spark.api.python.PythonWorkerFactory.startDaemon(PythonWorkerFactory.scala:197)
+	at org.apache.spark.api.python.PythonWorkerFactory.createThroughDaemon(PythonWorkerFactory.scala:122)
+	at org.apache.spark.api.python.PythonWorkerFactory.create(PythonWorkerFactory.scala:95)
+	at org.apache.spark.SparkEnv.createPythonWorker(SparkEnv.scala:118)
+	at org.apache.spark.api.python.BasePythonRunner.compute(PythonRunner.scala:111)
+	at org.apache.spark.api.python.PythonRDD.compute(PythonRDD.scala:66)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:346)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:310)
+	at org.apache.spark.scheduler.ResultTask.runTask(ResultTask.scala:90)
+	at org.apache.spark.scheduler.Task.run(Task.scala:123)
+	at org.apache.spark.executor.Executor$TaskRunner$$anonfun$11.apply(Executor.scala:413)
+	at org.apache.spark.util.Utils$.tryWithSafeFinally(Utils.scala:1334)
+	at org.apache.spark.executor.Executor$TaskRunner.run(Executor.scala:419)
+	at java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1149)
+	at java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:624)
+	at java.lang.Thread.run(Thread.java:750)
+Caused by: java.io.IOException: error=2, No such file or directory
+	at java.lang.UNIXProcess.forkAndExec(Native Method)
+	at java.lang.UNIXProcess.<init>(UNIXProcess.java:247)
+	at java.lang.ProcessImpl.start(ProcessImpl.java:134)
+	at java.lang.ProcessBuilder.start(ProcessBuilder.java:1029)
+	... 16 more
 
 # Rest of the code remains unchanged...
 
