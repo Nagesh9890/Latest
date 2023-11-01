@@ -1,184 +1,67 @@
-from pyspark.sql import functions as F
 
-def compute_aggregates_optimized(df, category_col, amount_col):
-    # Pivot and aggregate
-    agg_df = df.groupBy("payer_account_number", "payer_account_type").pivot(category_col).agg(
-        F.count(amount_col).alias("count"),
-        F.sum(amount_col).alias("sum")
-    )
+# Define the custom tokenizer
+def custom_tokenizer(text):
+    pattern = re.compile(r'[a-zA-Z]+\d+')
+    return pattern.findall(text)
+
+# Load the saved models and vectorizers
+clf_cat1 = pickle.load(open("clf_cat1.pkl", "rb"))
+clf_cat2 = pickle.load(open("clf_cat2.pkl", "rb"))
+tfidf_payer_name = pickle.load(open("tfidf_payer_name.pkl", "rb"))
+tfidf_payee_name = pickle.load(open("tfidf_payee_name.pkl", "rb"))
+tfidf_payee_account_type = pickle.load(open("tfidf_payee_account_type.pkl", "rb"))
+tfidf_payer_account_type = pickle.load(open("tfidf_payer_account_type.pkl", "rb"))
+tfidf_payer_vpa = pickle.load(open("tfidf_payer_vpa.pkl", "rb"))
+tfidf_payee_vpa = pickle.load(open("tfidf_payee_vpa.pkl", "rb"))
+
+# Define the prediction function with handling for None values
+def predict_categories(payer_name, payee_name, payee_account_type,
+                       payer_account_type, payer_vpa, payee_vpa):
     
-    # Get column names representing the categories (after pivot)
-    category_columns = [col for col in agg_df.columns if category_col in col and ("_sum" in col or "_count" in col)]
+    # Handle potential None values
+    payer_name = '' if payer_name is None else payer_name
+    payee_name = '' if payee_name is None else payee_name
+    payee_account_type = '' if payee_account_type is None else payee_account_type
+    payer_account_type = '' if payer_account_type is None else payer_account_type
+    payer_vpa = '' if payer_vpa is None else payer_vpa
+    payee_vpa = '' if payee_vpa is None else payee_vpa
     
-    for column in category_columns:
-        if "_sum" in column:
-            category = column.replace("_sum", "")
-            
-            savings_logic = bucketing_logic(column, "SAVINGS")
-            current_logic = bucketing_logic(column, "CURRENT")
-            
-            agg_df = agg_df.withColumn("type_" + category,
-                                       F.when(F.col("payer_account_type") == "SAVINGS", savings_logic)
-                                        .when(F.col("payer_account_type") == "CURRENT", current_logic)
-                                        .otherwise("Unknown Type"))
-    return agg_df.cache()
+    # Transform input data using the TFIDF vectorizers
+    payer_name_vec = tfidf_payer_name.transform([payer_name])
+    payee_name_vec = tfidf_payee_name.transform([payee_name])
+    payee_account_type_vec = tfidf_payee_account_type.transform([payee_account_type])
+    payer_account_type_vec = tfidf_payer_account_type.transform([payer_account_type])
+    payer_vpa_vec = tfidf_payer_vpa.transform([payer_vpa])
+    payee_vpa_vec = tfidf_payee_vpa.transform([payee_vpa])
 
+    tfidf_matrix = pd.concat([pd.DataFrame(payer_name_vec.toarray()),
+                              pd.DataFrame(payee_name_vec.toarray()),
+                              pd.DataFrame(payee_account_type_vec.toarray()),
+                              pd.DataFrame(payer_account_type_vec.toarray()),
+                              pd.DataFrame(payer_vpa_vec.toarray()),
+                              pd.DataFrame(payee_vpa_vec.toarray())], axis=1)
 
+    # Predict
+    prediction_cat1 = clf_cat1.predict(tfidf_matrix)
+    prediction_cat2 = clf_cat2.predict(tfidf_matrix)
 
+    return [prediction_cat1[0], prediction_cat2[0]]
 
+# Register the prediction function as a UDF
+predict_udf = udf(predict_categories, ArrayType(StringType()))
 
+# Assuming df2 is already defined and contains the necessary columns
+result_df = df2.withColumn("predictions", predict_udf("payer_name", "payee_name", "payee_account_type", "payer_account_type", "payer_vpa", "payee_vpa"))
 
+# Splitting predictions into individual columns
+result_df = result_df.withColumn("category_level1", result_df["predictions"].getItem(0))
+result_df = result_df.withColumn("category_level2", result_df["predictions"].getItem(1))
 
+# Dropping the combined predictions column
+result_df = result_df.drop("predictions")
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-Py4JJavaErrorTraceback (most recent call last)
-<ipython-input-15-854aebf0c677> in <module>()
-     43 
-     44 # Compute aggregates for category_level1 and category_level2
----> 45 agg_df1 = compute_aggregates_optimized(result_df, "category_level1", "payer_amount")
-     46 agg_df2 = compute_aggregates_optimized(result_df, "category_level2", "payer_amount")
-     47 
-
-<ipython-input-15-854aebf0c677> in compute_aggregates_optimized(df, category_col, amount_col)
-     26 
-     27     # List of categories
----> 28     categories = df.select(category_col).distinct().rdd.flatMap(lambda x: x).collect()
-     29 
-     30     # Rename columns, and add value type column
-
-/opt/cloudera/parcels/CDH-7.1.7-1.cdh7.1.7.p1000.24102687/lib/spark/python/pyspark/rdd.pyc in collect(self)
-    814         """
-    815         with SCCallSiteSync(self.context) as css:
---> 816             sock_info = self.ctx._jvm.PythonRDD.collectAndServe(self._jrdd.rdd())
-    817         return list(_load_from_socket(sock_info, self._jrdd_deserializer))
-    818 
-
-/opt/cloudera/parcels/CDH-7.1.7-1.cdh7.1.7.p1000.24102687/lib/spark/python/lib/py4j-0.10.7-src.zip/py4j/java_gateway.py in __call__(self, *args)
-   1255         answer = self.gateway_client.send_command(command)
-   1256         return_value = get_return_value(
--> 1257             answer, self.gateway_client, self.target_id, self.name)
-   1258 
-   1259         for temp_arg in temp_args:
-
-/opt/cloudera/parcels/CDH-7.1.7-1.cdh7.1.7.p1000.24102687/lib/spark/python/pyspark/sql/utils.pyc in deco(*a, **kw)
-     61     def deco(*a, **kw):
-     62         try:
----> 63             return f(*a, **kw)
-     64         except py4j.protocol.Py4JJavaError as e:
-     65             s = e.java_exception.toString()
-
-/opt/cloudera/parcels/CDH-7.1.7-1.cdh7.1.7.p1000.24102687/lib/spark/python/lib/py4j-0.10.7-src.zip/py4j/protocol.py in get_return_value(answer, gateway_client, target_id, name)
-    326                 raise Py4JJavaError(
-    327                     "An error occurred while calling {0}{1}{2}.\n".
---> 328                     format(target_id, ".", name), value)
-    329             else:
-    330                 raise Py4JError(
-
-Py4JJavaError: An error occurred while calling z:org.apache.spark.api.python.PythonRDD.collectAndServe.
-: org.apache.spark.SparkException: Job aborted due to stage failure: Task 143 in stage 51.0 failed 4 times, most recent failure: Lost task 143.3 in stage 51.0 (TID 2472, yball1r044ca20.yesbank.com, executor 24): java.io.IOException: Cannot run program "/opt/anaconda/anaconda2/bin/python": error=2, No such file or directory
-	at java.lang.ProcessBuilder.start(ProcessBuilder.java:1048)
-	at org.apache.spark.api.python.PythonWorkerFactory.startDaemon(PythonWorkerFactory.scala:197)
-	at org.apache.spark.api.python.PythonWorkerFactory.createThroughDaemon(PythonWorkerFactory.scala:122)
-	at org.apache.spark.api.python.PythonWorkerFactory.create(PythonWorkerFactory.scala:95)
-	at org.apache.spark.SparkEnv.createPythonWorker(SparkEnv.scala:118)
-	at org.apache.spark.api.python.BasePythonRunner.compute(PythonRunner.scala:111)
-	at org.apache.spark.api.python.PythonRDD.compute(PythonRDD.scala:66)
-	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:346)
-	at org.apache.spark.rdd.RDD.iterator(RDD.scala:310)
-	at org.apache.spark.scheduler.ResultTask.runTask(ResultTask.scala:90)
-	at org.apache.spark.scheduler.Task.run(Task.scala:123)
-	at org.apache.spark.executor.Executor$TaskRunner$$anonfun$11.apply(Executor.scala:413)
-	at org.apache.spark.util.Utils$.tryWithSafeFinally(Utils.scala:1334)
-	at org.apache.spark.executor.Executor$TaskRunner.run(Executor.scala:419)
-	at java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1149)
-	at java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:624)
-	at java.lang.Thread.run(Thread.java:750)
-Caused by: java.io.IOException: error=2, No such file or directory
-	at java.lang.UNIXProcess.forkAndExec(Native Method)
-	at java.lang.UNIXProcess.<init>(UNIXProcess.java:247)
-	at java.lang.ProcessImpl.start(ProcessImpl.java:134)
-	at java.lang.ProcessBuilder.start(ProcessBuilder.java:1029)
-	... 16 more
-
-Driver stacktrace:
-	at org.apache.spark.scheduler.DAGScheduler.org$apache$spark$scheduler$DAGScheduler$$failJobAndIndependentStages(DAGScheduler.scala:1928)
-	at org.apache.spark.scheduler.DAGScheduler$$anonfun$abortStage$1.apply(DAGScheduler.scala:1916)
-	at org.apache.spark.scheduler.DAGScheduler$$anonfun$abortStage$1.apply(DAGScheduler.scala:1915)
-	at scala.collection.mutable.ResizableArray$class.foreach(ResizableArray.scala:59)
-	at scala.collection.mutable.ArrayBuffer.foreach(ArrayBuffer.scala:48)
-	at org.apache.spark.scheduler.DAGScheduler.abortStage(DAGScheduler.scala:1915)
-	at org.apache.spark.scheduler.DAGScheduler$$anonfun$handleTaskSetFailed$1.apply(DAGScheduler.scala:951)
-	at org.apache.spark.scheduler.DAGScheduler$$anonfun$handleTaskSetFailed$1.apply(DAGScheduler.scala:951)
-	at scala.Option.foreach(Option.scala:257)
-	at org.apache.spark.scheduler.DAGScheduler.handleTaskSetFailed(DAGScheduler.scala:951)
-	at org.apache.spark.scheduler.DAGSchedulerEventProcessLoop.doOnReceive(DAGScheduler.scala:2149)
-	at org.apache.spark.scheduler.DAGSchedulerEventProcessLoop.onReceive(DAGScheduler.scala:2098)
-	at org.apache.spark.scheduler.DAGSchedulerEventProcessLoop.onReceive(DAGScheduler.scala:2087)
-	at org.apache.spark.util.EventLoop$$anon$1.run(EventLoop.scala:49)
-	at org.apache.spark.scheduler.DAGScheduler.runJob(DAGScheduler.scala:762)
-	at org.apache.spark.SparkContext.runJob(SparkContext.scala:2079)
-	at org.apache.spark.SparkContext.runJob(SparkContext.scala:2100)
-	at org.apache.spark.SparkContext.runJob(SparkContext.scala:2119)
-	at org.apache.spark.SparkContext.runJob(SparkContext.scala:2144)
-	at org.apache.spark.rdd.RDD$$anonfun$collect$1.apply(RDD.scala:990)
-	at org.apache.spark.rdd.RDDOperationScope$.withScope(RDDOperationScope.scala:151)
-	at org.apache.spark.rdd.RDDOperationScope$.withScope(RDDOperationScope.scala:112)
-	at org.apache.spark.rdd.RDD.withScope(RDD.scala:385)
-	at org.apache.spark.rdd.RDD.collect(RDD.scala:989)
-	at org.apache.spark.api.python.PythonRDD$.collectAndServe(PythonRDD.scala:167)
-	at org.apache.spark.api.python.PythonRDD.collectAndServe(PythonRDD.scala)
-	at sun.reflect.NativeMethodAccessorImpl.invoke0(Native Method)
-	at sun.reflect.NativeMethodAccessorImpl.invoke(NativeMethodAccessorImpl.java:62)
-	at sun.reflect.DelegatingMethodAccessorImpl.invoke(DelegatingMethodAccessorImpl.java:43)
-	at java.lang.reflect.Method.invoke(Method.java:498)
-	at py4j.reflection.MethodInvoker.invoke(MethodInvoker.java:244)
-	at py4j.reflection.ReflectionEngine.invoke(ReflectionEngine.java:357)
-	at py4j.Gateway.invoke(Gateway.java:282)
-	at py4j.commands.AbstractCommand.invokeMethod(AbstractCommand.java:132)
-	at py4j.commands.CallCommand.execute(CallCommand.java:79)
-	at py4j.GatewayConnection.run(GatewayConnection.java:238)
-	at java.lang.Thread.run(Thread.java:748)
-Caused by: java.io.IOException: Cannot run program "/opt/anaconda/anaconda2/bin/python": error=2, No such file or directory
-	at java.lang.ProcessBuilder.start(ProcessBuilder.java:1048)
-	at org.apache.spark.api.python.PythonWorkerFactory.startDaemon(PythonWorkerFactory.scala:197)
-	at org.apache.spark.api.python.PythonWorkerFactory.createThroughDaemon(PythonWorkerFactory.scala:122)
-	at org.apache.spark.api.python.PythonWorkerFactory.create(PythonWorkerFactory.scala:95)
-	at org.apache.spark.SparkEnv.createPythonWorker(SparkEnv.scala:118)
-	at org.apache.spark.api.python.BasePythonRunner.compute(PythonRunner.scala:111)
-	at org.apache.spark.api.python.PythonRDD.compute(PythonRDD.scala:66)
-	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:346)
-	at org.apache.spark.rdd.RDD.iterator(RDD.scala:310)
-	at org.apache.spark.scheduler.ResultTask.runTask(ResultTask.scala:90)
-	at org.apache.spark.scheduler.Task.run(Task.scala:123)
-	at org.apache.spark.executor.Executor$TaskRunner$$anonfun$11.apply(Executor.scala:413)
-	at org.apache.spark.util.Utils$.tryWithSafeFinally(Utils.scala:1334)
-	at org.apache.spark.executor.Executor$TaskRunner.run(Executor.scala:419)
-	at java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1149)
-	at java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:624)
-	at java.lang.Thread.run(Thread.java:750)
-Caused by: java.io.IOException: error=2, No such file or directory
-	at java.lang.UNIXProcess.forkAndExec(Native Method)
-	at java.lang.UNIXProcess.<init>(UNIXProcess.java:247)
-	at java.lang.ProcessImpl.start(ProcessImpl.java:134)
-	at java.lang.ProcessBuilder.start(ProcessBuilder.java:1029)
-	... 16 more
-
-# Rest of the code remains unchanged...
-
+# Show the resulting DataFrame
+result_df.show(10)
   
   
   
@@ -193,8 +76,7 @@ Caused by: java.io.IOException: error=2, No such file or directory
   
   
   
-  
-  
+  --------------------------------------
   File "<ipython-input-12-c46e6c75c523>", line 20
     .otherwise(F.expr(f"CASE WHEN sum_{category} BETWEEN 5000000 * (10 - id) AND 5000000 * (9 - id) THEN CAST(id AS STRING) ELSE NULL END"))
                                                                                                                                          ^
