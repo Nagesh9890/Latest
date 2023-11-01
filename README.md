@@ -1,99 +1,59 @@
-#automated Model Training
-#Importing Libraries
-import numpy as np
-import pandas as pd
-import pickle
-from sklearn.cross_validation import train_test_split
-from sklearn.preprocessing import StandardScaler
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import confusion_matrix
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics import accuracy_score
+from pyspark.ml.feature import HashingTF, IDF, Tokenizer, VectorAssembler
+from pyspark.ml.classification import RandomForestClassifier
+from pyspark.ml.evaluation import MulticlassClassificationEvaluator
+from pyspark.ml import Pipeline
+from pyspark.sql.functions import col
 
-df = pd.read_excel("PhonePe_Sherloc_Categories.xlsx")  # Replace with the path to your dataset
-df.columns
-df2 = df[['payer_name','payer_vpa','payee_account_type','payee_name','payee_vpa','payer_account_type', 'Category1','Category2']]
+# Assuming your SparkSession is initialized as `spark`
+df = spark.read.format("com.databricks.spark.csv").option("header", "true").load("PhonePe_Sherloc_Categories.xlsx")
 
-def custom_tokenizer(text):
-    # split the text and value using regular expression
-    import re
-    pattern = re.compile(r'[a-zA-Z]+\d+')
-    text_and_value = pattern.findall(text)
-    return text_and_value
-# Apply TF-Vectorization on data
-tfidf_payer_name = TfidfVectorizer()
-tfidf_matrix_payer_name = tfidf_payer_name.fit_transform(df2['payer_name'].astype(str))
+# Select the relevant columns
+df2 = df.select(['payer_name','payer_vpa','payee_account_type','payee_name','payee_vpa','payer_account_type', 'Category1','Category2'])
 
-tfidf_payee_name = TfidfVectorizer()
-tfidf_matrix_payee_name = tfidf_payee_name.fit_transform(df2['payee_name'].astype(str))
+# Tokenize the columns
+tokenizer_inputs = ['payer_name', 'payee_name', 'payee_account_type', 'payer_account_type', 'payer_vpa', 'payee_vpa']
+tokenizer_outputs = [f"{column}_tokens" for column in tokenizer_inputs]
 
-tfidf_payee_account_type = TfidfVectorizer()
-tfidf_matrix_payee_account_type = tfidf_payee_account_type.fit_transform(df2['payee_account_type'].astype(str))
+tokenizers = [Tokenizer(inputCol=column, outputCol=column+"_tokens") for column in tokenizer_inputs]
 
-tfidf_payer_account_type = TfidfVectorizer()
-tfidf_matrix_payer_account_type = tfidf_payer_account_type.fit_transform(df2['payer_account_type'].astype(str))
+# Use HashingTF and IDF to convert tokens to features
+hashingTFs = [HashingTF(inputCol=f"{column}_tokens", outputCol=f"{column}_tf") for column in tokenizer_inputs]
+idfs = [IDF(inputCol=f"{column}_tf", outputCol=f"{column}_features") for column in tokenizer_inputs]
 
-tfidf_payer_vpa = TfidfVectorizer(tokenizer=custom_tokenizer)
-df2['payer_vpa'] = df2['payer_vpa'].astype(str)
-tfidf_matrix_payer_vpa = tfidf_payer_vpa.fit_transform(df2['payer_vpa'])
+# Assemble features
+assembler = VectorAssembler(inputCols=[f"{column}_features" for column in tokenizer_inputs], outputCol="features")
 
-tfidf_payee_vpa = TfidfVectorizer(tokenizer=custom_tokenizer)
-df2['payee_vpa'] = df2['payee_vpa'].astype(str)
-tfidf_matrix_payee_vpa = tfidf_payee_vpa.fit_transform(df2['payee_vpa'])
+# Split data
+train, test = df2.randomSplit([0.8, 0.2], seed=42)
 
+# Train Random Forest models
+rf_cat1 = RandomForestClassifier(labelCol="Category1", featuresCol="features")
+rf_cat2 = RandomForestClassifier(labelCol="Category2", featuresCol="features")
 
-tfidf_matrix = pd.concat([pd.DataFrame(tfidf_matrix_payer_name.toarray()),
-                          pd.DataFrame(tfidf_matrix_payee_name.toarray()),
-                          pd.DataFrame(tfidf_matrix_payee_account_type.toarray()),
-                          pd.DataFrame(tfidf_matrix_payer_account_type.toarray()),
-                          pd.DataFrame(tfidf_matrix_payer_vpa.toarray()),
-                          pd.DataFrame(tfidf_matrix_payee_vpa.toarray())], axis=1)
-X_train, X_test, y_cat1_train, y_cat1_test, y_cat2_train, y_cat2_test = train_test_split(tfidf_matrix, df2['Category1'], df2['Category2'], test_size=0.2, random_state=42)
-clf_cat1 = RandomForestClassifier()
+# Build pipelines
+pipeline_cat1 = Pipeline(stages=tokenizers + hashingTFs + idfs + [assembler, rf_cat1])
+pipeline_cat2 = Pipeline(stages=tokenizers + hashingTFs + idfs + [assembler, rf_cat2])
 
-clf_cat1.fit(X_train, y_cat1_train)
+# Fit models
+model_cat1 = pipeline_cat1.fit(train)
+model_cat2 = pipeline_cat2.fit(train)
 
-clf_cat2 = RandomForestClassifier()
-clf_cat2.fit(X_train, y_cat2_train) # Make predictions for each target variable
+# Predictions
+predictions_cat1 = model_cat1.transform(test)
+predictions_cat2 = model_cat2.transform(test)
 
-predictions_cat1 = clf_cat1.predict(X_test)
-predictions_cat2 = clf_cat2.predict(X_test)
+# Evaluate
+evaluator = MulticlassClassificationEvaluator(labelCol="Category1", predictionCol="prediction", metricName="accuracy")
+accuracy_cat1 = evaluator.evaluate(predictions_cat1)
+print("Accuracy for Category Level 1: %.2f" % accuracy_cat1)
 
-accuracy_cat1 = accuracy_score(y_cat1_test, predictions_cat1)
-print "Accuracy for Category Level 1: %.2f" % accuracy_cat1 
+evaluator = MulticlassClassificationEvaluator(labelCol="Category2", predictionCol="prediction", metricName="accuracy")
+accuracy_cat2 = evaluator.evaluate(predictions_cat2)
+print("Accuracy for Category Level 2: %.2f" % accuracy_cat2)
 
-
-# Calculate accuracy for Category Level 2 predictions
-accuracy_cat2 = accuracy_score(y_cat2_test, predictions_cat2)
-print "Accuracy for Category Level 2: %.2f" % accuracy_cat2
-
-df2.head(2)
-
-# After training the Random Forest classifiers:
-with open("clf_cat1.pkl", "wb") as f:
-    pickle.dump(clf_cat1, f)
-
-with open("clf_cat2.pkl", "wb") as f:
-    pickle.dump(clf_cat2, f)
-
-# After fitting the Tfidf vectorizers:
-with open("tfidf_payer_name.pkl", "wb") as f:
-    pickle.dump(tfidf_payer_name, f)
-
-with open("tfidf_payee_name.pkl", "wb") as f:
-    pickle.dump(tfidf_payee_name, f)
-
-with open("tfidf_payee_account_type.pkl", "wb") as f:
-    pickle.dump(tfidf_payee_account_type, f)
-
-with open("tfidf_payer_account_type.pkl", "wb") as f:
-    pickle.dump(tfidf_payer_account_type, f)
-
-with open("tfidf_payer_vpa.pkl", "wb") as f:
-    pickle.dump(tfidf_payer_vpa, f)
-
-with open("tfidf_payee_vpa.pkl", "wb") as f:
-    pickle.dump(tfidf_payee_vpa, f)
+# Save the models if needed
+model_cat1.write().overwrite().save("path_to_save_model_cat1")
+model_cat2.write().overwrite().save("path_to_save_model_cat2")
 
 
 
