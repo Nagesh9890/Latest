@@ -1,3 +1,60 @@
+
+Apologies for the oversight. The error is due to the fact that I attempted to use f-string formatting with Spark SQL expressions, which is not directly supported.
+
+Let's refactor the code to avoid the issue. Instead of using f-string formatting, we can construct the logic using PySpark functions.
+
+python
+Copy code
+from pyspark.sql import functions as F
+
+def compute_aggregates_optimized(df, category_col, amount_col):
+    # Pivot and aggregate
+    agg_df = df.groupBy("payer_account_number", "payer_account_type").pivot(category_col).agg(
+        F.count(amount_col).alias("count"),
+        F.sum(amount_col).alias("sum")
+    )
+    
+    # List of categories
+    categories = df.select(category_col).distinct().rdd.flatMap(lambda x: x).collect()
+    
+    # Rename columns, and add value type column
+    for category in categories:
+        agg_df = agg_df.withColumnRenamed(category + "_count", "count_" + category) \
+                      .withColumnRenamed(category + "_sum", "sum_" + category) \
+                      .withColumn("type_" + category, 
+                                  F.when((F.col("count_" + category) == 0) | (F.col("sum_" + category).isNull()) | (F.col("sum_" + category) == 0), "No transactions")
+                                  .when(F.col("payer_account_type") == "SAVINGS", 
+                                        F.when(F.col("sum_" + category) < 5000000, "10")
+                                        .otherwise(
+                                            F.expr("CASE WHEN sum_{0} BETWEEN 5000000 * (10 - id) AND 5000000 * (9 - id) THEN CAST(id AS STRING) ELSE NULL END".format(category))
+                                        )
+                                  )
+                                  .when(F.col("payer_account_type") == "CURRENT", 
+                                        F.when(F.col("sum_" + category) < 15000000, "10")
+                                        .otherwise(
+                                            F.expr("CASE WHEN sum_{0} BETWEEN 15000000 * (10 - id) AND 15000000 * (9 - id) THEN CAST(id AS STRING) ELSE NULL END".format(category))
+                                        )
+                                  )
+                                  .otherwise("Unknown Type"))
+    
+    return agg_df.cache()  # Cache this DataFrame
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
+  
   File "<ipython-input-12-c46e6c75c523>", line 20
     .otherwise(F.expr(f"CASE WHEN sum_{category} BETWEEN 5000000 * (10 - id) AND 5000000 * (9 - id) THEN CAST(id AS STRING) ELSE NULL END"))
                                                                                                                                          ^
